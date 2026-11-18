@@ -39,6 +39,7 @@
 #include <rosserial_msgs/TopicInfo.h>
 #include <topic_tools/shape_shifter.h>
 #include <rosserial_server/msg_lookup.h>
+#include <rosserial_server/servo_states_validation.h>
 
 #include <chrono>
 #include <thread>
@@ -49,7 +50,10 @@ namespace rosserial_server
 
 class Publisher {
 public:
-  Publisher(ros::NodeHandle& nh, const rosserial_msgs::TopicInfo& topic_info) {
+  Publisher(ros::NodeHandle& nh, const rosserial_msgs::TopicInfo& topic_info)
+    : servo_states_(topic_info.message_type == "spinal/ServoStates"),
+      servo_states_schema_matches_(topic_info.md5sum == "8ab23ee17ec1578fba9ec2244276b0ef") {
+
     rosserial_server::MsgInfo msginfo;
     try
     {
@@ -71,6 +75,18 @@ public:
   }
 
   void handle(ros::serialization::IStream stream) {
+    if (servo_states_)
+    {
+      const char* reason = servo_states_schema_matches_
+          ? validateServoStates(stream.getData(), stream.getLength())
+          : "unsupported ServoStates MD5/schema";
+      if (reason != nullptr)
+      {
+        ROS_WARN_THROTTLE(1.0, "Dropping malformed ServoStates on %s (%u bytes): %s",
+                          publisher_.getTopic().c_str(), stream.getLength(), reason);
+        return;
+      }
+    }
     ros::serialization::Serializer<topic_tools::ShapeShifter>::read(stream, message_);
     publisher_.publish(message_);
   }
@@ -82,6 +98,8 @@ public:
 private:
   ros::Publisher publisher_;
   topic_tools::ShapeShifter message_;
+  const bool servo_states_;
+  const bool servo_states_schema_matches_;
 };
 
 typedef boost::shared_ptr<Publisher> PublisherPtr;
